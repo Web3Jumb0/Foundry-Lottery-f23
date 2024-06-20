@@ -16,6 +16,7 @@ contract Raffle is VRFConsumerBaseV2 {
     error Raffle_NotEnoughEthToEnterRaffle();
     error Raffle_TransferFailed();
     error Raffle_RaffleNotOpen();
+    error Raffle_UpkeepNotNeeded(uint256 currentBalance, uint256 numPlayers, uint256 RaffleState);
 
     /* Types declarations*/
     enum RaffleState {
@@ -76,17 +77,41 @@ contract Raffle is VRFConsumerBaseV2 {
         emit EnteredRaffle(msg.sender);
     }
 
-    // 1.gGet a random number
-    // 2. Use the random numbe to pick a winner
-    // 3. Be automatically called
-    function pickWinner() public {
+    // When is the winner supposed to be picked?
+    /**
+     * @dev This is the function that the Chainlink Automation nodes call
+     * to see if it's time to perform an upkeep.
+     * The following should be true for this to return true:
+     * 1. The time interval has passed between raffles runs
+     * 2. The raffle is in the OPEN state
+     * 3. The contract has ETH (aka, players)
+     * 4. (Implicit) The subscripton is funded with LINK
+     */
+
+    function checkUpkeep(bytes memory /* checkData */) public view returns (bool upkeepNeeded, bytes memory /* performData */) {
+        bool timeHasPassed = (block.timestamp - s_lastTimeStamep) >= i_invterval;
+        bool isOpen = RaffleState.OPEN == s_raffleState;
+        bool hasBalance = address(this).balance > 0;
+        bool hasPlayers = s_players.length > 0;
+        upkeepNeeded = timeHasPassed && isOpen && hasBalance && hasPlayers;
+        return (upkeepNeeded, "");
+
+    }
+
+    function performUpkeep(bytes calldata /* performData */) external {
+        (bool upkeepNeeded, ) = checkUpkeep("");
+        if (!upkeepNeeded) {
+            revert Raffle_UpkeepNotNeeded(address(this).balance, s_players.length, uint256(s_raffleState));
+        }
+        
+         
         // Pick the winner
         if (block.timestamp - s_lastTimeStamep < i_invterval) {
             revert();
         }
 
         s_raffleState = RaffleState.CALCULATING;
-        uint256 requestId = i_vrfCoordinator.requestRandomWords(
+        i_vrfCoordinator.requestRandomWords(
             i_gasLane, //gas lane
             i_subscriptionId,
             REQUEST_CONFIRMATIONS,
@@ -96,7 +121,7 @@ contract Raffle is VRFConsumerBaseV2 {
     }
 
     function fulfillRandomWords(
-        uint256 requestID,
+        uint256 /* requestID */,
         uint256[] memory randomWords
     ) internal override {
         // Checks
